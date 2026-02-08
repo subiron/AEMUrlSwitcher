@@ -11,14 +11,12 @@ async function loadConfig() {
 
     if (result.programConfig) {
       console.log("Loading configuration from local storage");
-      // Storage now holds the parsed minimal config
       menuConfig = result.programConfig;
     } else {
       console.log("Loading default configuration from program.json");
       const response = await fetch('program.json');
       if (!response.ok) throw new Error("Failed to fetch program.json");
       const json = await response.json();
-      // Parse the raw cloud JSON
       menuConfig = parseConfig(json);
     }
 
@@ -34,24 +32,9 @@ async function loadConfig() {
   }
 }
 
-// Listen for storage changes to reload context menu
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'local' && changes.programConfig) {
-    loadConfig();
-  }
-});
-
-// Listen for explicit reload requests (e.g. from options page)
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "reloadConfig") {
-    loadConfig();
-    sendResponse({ status: "reloading" });
-  }
-});
-
 function buildContextMenu(programs) {
   chrome.contextMenus.removeAll();
-  actionMap = {}; // Reset actions
+  actionMap = {}; 
 
   if (!programs || programs.length === 0) {
     chrome.contextMenus.create({
@@ -62,23 +45,39 @@ function buildContextMenu(programs) {
     return;
   }
 
+  // Create Root Item
+  // This ensures the extension icon is displayed next to the root item
+  const ROOT_ID = "root_switcher";
+  chrome.contextMenus.create({
+    id: ROOT_ID,
+    title: "URL Switcher",
+    contexts: ["page"]
+  });
+
   const skipProgramLevel = programs.length === 1;
 
   programs.forEach((program, pIndex) => {
-    let parentId = undefined;
+    let parentId = ROOT_ID;
 
+    // If multiple programs, create a program level. 
+    // If single program, we skip this level and attach environments directly to ROOT.
     if (!skipProgramLevel) {
-      parentId = `prog_${pIndex}`;
+      const progId = `prog_${pIndex}`;
       chrome.contextMenus.create({
-        id: parentId,
+        id: progId,
+        parentId: ROOT_ID,
         title: program.name,
         contexts: ["page"]
       });
+      parentId = progId;
     }
 
     if (program.environments) {
       program.environments.forEach((env, eIndex) => {
-        const envId = `${parentId ? parentId + '_' : ''}env_${eIndex}`;
+        // ID generation: progIndex_envIndex
+        // We need to ensure uniqueness if we skip program level, but pIndex is 0.
+        const envId = `p${pIndex}_env${eIndex}`;
+        
         chrome.contextMenus.create({
           id: envId,
           parentId: parentId,
@@ -88,7 +87,7 @@ function buildContextMenu(programs) {
 
         if (env.instances) {
           env.instances.forEach((inst, iIndex) => {
-            const instId = `${envId}_inst_${iIndex}`;
+            const instId = `${envId}_inst${iIndex}`;
             chrome.contextMenus.create({
               id: instId,
               parentId: envId,
@@ -97,7 +96,6 @@ function buildContextMenu(programs) {
             });
 
             const services = [];
-            // Define services based on instance type
             if (inst.type === 'author') {
               services.push({ id: 'crx', title: 'CRX/DE' });
               services.push({ id: 'editor', title: 'Editor' });
@@ -107,7 +105,6 @@ function buildContextMenu(programs) {
               services.push({ id: 'crx', title: 'CRX/DE' });
               services.push({ id: 'json', title: 'JSON' });
             } else {
-              // Preview / Live -> just open
               services.push({ id: 'open', title: 'Open' });
             }
 
@@ -120,7 +117,6 @@ function buildContextMenu(programs) {
                 contexts: ["page"]
               });
               
-              // Store the action data
               actionMap[svcId] = {
                 url: inst.url,
                 mode: svc.id
@@ -137,13 +133,11 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   const action = actionMap[info.menuItemId];
   if (action) {
     const currentUrl = tab.url;
-    // Extract resource path
     let resourcePath = extractResourcePath(currentUrl);
     
-    // Fallback logic: "Jesli ekstrakcja url nie jest mozliwa robimy fallback na adres bazowy instancji."
     if (!resourcePath) {
        console.log("Could not extract resource path. Opening base URL.");
-       chrome.tabs.create({ url: action.url }); // Just open the instance base URL
+       chrome.tabs.create({ url: action.url });
        return;
     }
 
@@ -154,3 +148,17 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 chrome.runtime.onInstalled.addListener(loadConfig);
 chrome.runtime.onStartup.addListener(loadConfig);
+
+// Listen for storage changes
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'local' && changes.programConfig) {
+    loadConfig();
+  }
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "reloadConfig") {
+    loadConfig();
+    sendResponse({ status: "reloading" });
+  }
+});
