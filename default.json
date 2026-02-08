@@ -1,0 +1,22 @@
+[
+  {
+    "environments": [
+      {
+        "instances": [
+          {
+            "type": "author",
+            "url": "http://localhost:4502"
+          },
+          {
+            "type": "publish",
+            "url": "http://localhost:4503"
+          }
+        ],
+        "name": "local",
+        "type": "dev"
+      }
+    ],
+    "name": "LOCAL",
+    "id": "0"
+  }
+]

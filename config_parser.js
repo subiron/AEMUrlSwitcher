@@ -2,7 +2,7 @@ export function parseConfig(jsonConfig) {
   const menuStructure = [];
 
   if (!jsonConfig || !jsonConfig._embedded || !jsonConfig._embedded.programs) {
-    return [];
+    return jsonConfig;
   }
 
   jsonConfig._embedded.programs.forEach(program => {

@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
         textarea.value = JSON.stringify(result.programConfig, null, 2);
       } else {
         // If nothing in storage, load default program.json, parse it, and show that.
-        fetch(chrome.runtime.getURL('program.json'))
+        fetch(chrome.runtime.getURL('default.json'))
           .then(res => res.json())
           .then(json => {
             const minimal = parseConfig(json);
@@ -155,11 +155,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Reset to Default
   resetBtn.addEventListener('click', () => {
     if (confirm("Are you sure you want to reset to the default configuration?")) {
-        fetch(chrome.runtime.getURL('program.json'))
+        fetch(chrome.runtime.getURL('default.json'))
         .then(res => res.json())
         .then(json => {
             const minimal = parseConfig(json);
-            saveMinimalConfig(minimal);
+            saveMinimalConfig(json);
             showStatus("Reset to default configuration.");
         })
         .catch(err => {
