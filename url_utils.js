@@ -10,8 +10,8 @@ export function extractResourcePath(url) {
     }
 
     // Pattern 2: /editor.html/...
-    if (path.startsWith('/editor.html')) {
-      path = path.replace('/editor.html', '');
+    if (path.startsWith('/editor.html') || path.startsWith("/ui#")) {
+      path = path.replace('/editor.html', '').replace("/ui#",'')
     }
 
     // Common cleanup: Remove .html extension and query params

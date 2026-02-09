@@ -2,18 +2,19 @@ export function parseConfig(jsonConfig) {
   const menuStructure = [];
 
   if (!jsonConfig || !jsonConfig._embedded || !jsonConfig._embedded.programs) {
-    return jsonConfig;
+    return [];
   }
 
   jsonConfig._embedded.programs.forEach(program => {
     const programName = program.name;
-    const programId = program.id;
+    // Removed ID from model per requirement
     const environments = [];
 
     if (program._embedded && program._embedded.environments) {
       program._embedded.environments.forEach(env => {
-        const envName = env.name; // e.g., "rittal-prod" or "CIDEON Staging"
-        const envType = env.type; // e.g., "prod", "stage", "dev"
+        const envName = env.name; 
+        const envType = env.type;
+        // Removed ID from model
         const instances = [];
 
         const links = env._links;
@@ -33,7 +34,7 @@ export function parseConfig(jsonConfig) {
         }
          if (links['http://ns.adobe.com/adobecloud/rel/preview']) {
            instances.push({
-             type: 'preview', // Treat as live/preview
+             type: 'preview', 
              url: links['http://ns.adobe.com/adobecloud/rel/preview'].href
            });
         }
@@ -48,7 +49,6 @@ export function parseConfig(jsonConfig) {
 
     menuStructure.push({
       name: programName,
-      id: programId,
       environments: environments
     });
   });

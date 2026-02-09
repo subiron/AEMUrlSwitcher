@@ -11,6 +11,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const importCloudFile = document.getElementById('importCloudFile');
   const statusDiv = document.getElementById('status');
 
+  // Dialog elements
+  const dialog = document.getElementById('importChoiceDialog');
+  const btnMerge = document.getElementById('btnMerge');
+  const btnReplace = document.getElementById('btnReplace');
+  const btnCancel = document.getElementById('btnCancelImport');
+
+  let pendingConfig = null;
+
   // Helper: Show status message
   function showStatus(message, type = 'success') {
     statusDiv.textContent = message;
@@ -21,44 +29,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 5000);
   }
 
-  // Helper: Update Textarea with current config
+  // Helper: Get current config from storage (promise)
+  function getCurrentConfig() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['programConfig'], (result) => {
+        resolve(result.programConfig || []);
+      });
+    });
+  }
+
+  // Helper: Update Textarea
   function updateConfigDisplay() {
-    chrome.storage.local.get(['programConfig'], (result) => {
-      if (result.programConfig) {
-        // We now store the *parsed* minimal config, not the raw program.json
-        // But wait, the background script currently expects the raw program.json structure?
-        // Let's check background.js. 
-        // background.js: `const menuConfig = parseConfig(json);`
-        // So background.js expects `program.json` format currently.
-        
-        // The user wants: 
-        // 1. "Import/Export configuration minimal specific for this plugin" 
-        //    -> implies storing the RESULT of parseConfig.
-        // 2. "Import from cloud" -> takes program.json format.
-        
-        // So we need to change how we store data. 
-        // Let's assume `programConfig` in storage now holds the MINIMAL structure (array of programs).
-        
-        textarea.value = JSON.stringify(result.programConfig, null, 2);
-      } else {
-        // If nothing in storage, load default program.json, parse it, and show that.
-        fetch(chrome.runtime.getURL('default.json'))
+    getCurrentConfig().then(config => {
+      if (config.length === 0) {
+        // Try loading default just for display if storage is empty
+         fetch(chrome.runtime.getURL('program.json'))
           .then(res => res.json())
           .then(json => {
             const minimal = parseConfig(json);
+             // Don't save, just show
             textarea.value = JSON.stringify(minimal, null, 2);
-            // Auto-save the default minimal config to storage?
-            // chrome.storage.local.set({ programConfig: minimal });
           })
-          .catch(err => {
-            console.error("Failed to load default config", err);
-            textarea.value = "[]";
-          });
+          .catch(() => textarea.value = "[]");
+      } else {
+        textarea.value = JSON.stringify(config, null, 2);
       }
     });
   }
 
-  // Helper: Save minimal config to storage
+  // Helper: Save config
   function saveMinimalConfig(config) {
     chrome.storage.local.set({ programConfig: config }, () => {
       showStatus("Configuration saved! Context menu updated.");
@@ -67,19 +66,138 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Event Listeners ---
+  // --- Merge Logic ---
+  function mergeConfigs(existing, incoming) {
+    // Deep clone existing to avoid mutating input reference immediately
+    const merged = JSON.parse(JSON.stringify(existing));
+    // Match by Name
+    const progMap = new Map(merged.map(p => [p.name, p]));
 
-  // Save Manual Changes (Textarea)
+    incoming.forEach(incProg => {
+      const exProg = progMap.get(incProg.name);
+      if (exProg) {
+        // Merge Environments
+        if (!exProg.environments) exProg.environments = [];
+        
+        // Match Environments by Name
+        const envMap = new Map(exProg.environments.map(e => [e.name, e])); 
+
+        incProg.environments.forEach(incEnv => {
+          const envKey = incEnv.name;
+          const exEnv = envMap.get(envKey);
+          
+          if (exEnv) {
+             // Update details
+             exEnv.type = incEnv.type;
+             // Replace instances
+             exEnv.instances = incEnv.instances;
+          } else {
+             // Add new environment
+             exProg.environments.push(incEnv);
+             envMap.set(envKey, incEnv); 
+          }
+        });
+
+      } else {
+        // Add new program
+        merged.push(incProg);
+        progMap.set(incProg.name, incProg);
+      }
+    });
+
+    return merged;
+  }
+
+
+  // --- Import Flow ---
+  function handleImport(newConfig) {
+    pendingConfig = newConfig;
+    if (typeof dialog.showModal === "function") {
+      dialog.showModal();
+    } else {
+      // Fallback for very old browsers (unlikely in Chrome Ext)
+      if (confirm("Click OK to Merge, Cancel to Replace")) {
+         performMerge();
+      } else {
+         performReplace();
+      }
+    }
+  }
+
+  function performReplace() {
+    saveMinimalConfig(pendingConfig);
+    pendingConfig = null;
+    dialog.close();
+  }
+
+  async function performMerge() {
+    const current = await getCurrentConfig();
+    const merged = mergeConfigs(current, pendingConfig);
+    saveMinimalConfig(merged);
+    pendingConfig = null;
+    dialog.close();
+  }
+
+
+  // --- Listeners ---
+
+  // Dialog Buttons
+  btnMerge.addEventListener('click', performMerge);
+  btnReplace.addEventListener('click', performReplace);
+  btnCancel.addEventListener('click', () => {
+    pendingConfig = null;
+    dialog.close();
+    // Clear file inputs
+    importFile.value = '';
+    importCloudFile.value = '';
+  });
+
+
+  // Import Minimal
+  importBtn.addEventListener('click', () => importFile.click());
+  importFile.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target.result);
+        if (!Array.isArray(json)) throw new Error("Invalid format.");
+        handleImport(json);
+      } catch (err) {
+        showStatus("Error: " + err.message, 'error');
+      }
+    };
+    reader.readAsText(file);
+    importFile.value = ''; 
+  });
+
+  // Import Cloud
+  importCloudBtn.addEventListener('click', () => importCloudFile.click());
+  importCloudFile.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target.result);
+        const minimal = parseConfig(json);
+        if (minimal.length === 0) throw new Error("No programs found.");
+        handleImport(minimal);
+      } catch (err) {
+        showStatus("Error: " + err.message, 'error');
+      }
+    };
+    reader.readAsText(file);
+    importCloudFile.value = '';
+  });
+
+  // Save Manual
   if (saveBtn) {
     saveBtn.addEventListener('click', () => {
       try {
         const json = JSON.parse(textarea.value);
-        if (!Array.isArray(json)) {
-            throw new Error("Invalid configuration: Must be an array.");
-        }
-        if (json.length > 0 && !json[0].environments) {
-             throw new Error("Invalid format: Missing 'environments' property.");
-        }
+        if (!Array.isArray(json)) throw new Error("Invalid array.");
         saveMinimalConfig(json);
       } catch (e) {
         showStatus("Error: " + e.message, 'error');
@@ -99,75 +217,19 @@ document.addEventListener('DOMContentLoaded', () => {
     URL.revokeObjectURL(url);
   });
 
-  // Import Minimal JSON
-  importBtn.addEventListener('click', () => importFile.click());
-  importFile.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const json = JSON.parse(event.target.result);
-        if (!Array.isArray(json)) {
-            throw new Error("Invalid format: Configuration must be an array of programs.");
-        }
-        // Basic validation: check for 'environments' in items
-        if (json.length > 0 && !json[0].environments) {
-             throw new Error("Invalid format: Missing 'environments' property.");
-        }
-        saveMinimalConfig(json);
-      } catch (err) {
-        showStatus("Error importing file: " + err.message, 'error');
-      }
-    };
-    reader.readAsText(file);
-    // Reset input
-    importFile.value = ''; 
-  });
-
-  // Import Cloud JSON (program.json format)
-  importCloudBtn.addEventListener('click', () => importCloudFile.click());
-  importCloudFile.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const json = JSON.parse(event.target.result);
-        const minimalConfig = parseConfig(json);
-        
-        if (minimalConfig.length === 0) {
-             throw new Error("No valid programs found in Cloud JSON.");
-        }
-        
-        saveMinimalConfig(minimalConfig);
-        showStatus("Cloud configuration imported and converted successfully!");
-      } catch (err) {
-        showStatus("Error importing Cloud JSON: " + err.message, 'error');
-      }
-    };
-    reader.readAsText(file);
-    importCloudFile.value = '';
-  });
-
-  // Reset to Default
+  // Reset
   resetBtn.addEventListener('click', () => {
-    if (confirm("Are you sure you want to reset to the default configuration?")) {
-        fetch(chrome.runtime.getURL('default.json'))
+    if (confirm("Reset to default?")) {
+        fetch(chrome.runtime.getURL('program.json'))
         .then(res => res.json())
         .then(json => {
             const minimal = parseConfig(json);
-            saveMinimalConfig(json);
-            showStatus("Reset to default configuration.");
-        })
-        .catch(err => {
-            showStatus("Error resetting config: " + err.message, 'error');
+            // Treat reset as a "Replace" with default
+            saveMinimalConfig(minimal);
         });
     }
   });
 
-  // Initialize
+  // Init
   updateConfigDisplay();
 });

@@ -23,11 +23,10 @@
   
   <div id="status" class="status" style="display: none;"></div>
 
-  <div class="section">
-    <h2>Current Configuration</h2>
-    <p>This is the active configuration used by the extension.</p>
-    <textarea id="configJson" readonly></textarea>
-    <div class="controls">
+      <div class="section">
+      <h2>Current Configuration</h2>
+      <p>This is the active configuration used by the extension.</p>
+      <textarea id="configJson"></textarea>    <div class="controls">
       <button id="saveConfig" class="btn-primary">Save Changes</button>
       <button id="exportConfig" class="btn-secondary">Export to JSON</button>
       <button id="importConfigBtn" class="btn-secondary">Import from JSON</button>
@@ -44,6 +43,16 @@
       <input type="file" id="importCloudFile" accept=".json">
     </div>
   </div>
+
+  <dialog id="importChoiceDialog" style="padding: 20px; border: 1px solid #ccc; border-radius: 8px;">
+    <h3>Import Configuration</h3>
+    <p>How would you like to handle the imported configuration?</p>
+    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+      <button id="btnMerge" class="btn-primary">Merge with Existing</button>
+      <button id="btnReplace" class="btn-danger">Replace Existing</button>
+      <button id="btnCancelImport" class="btn-secondary">Cancel</button>
+    </div>
+  </dialog>
 
   <script src="options.js" type="module"></script>
 </body>
