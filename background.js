@@ -14,8 +14,8 @@ async function loadConfig() {
       menuConfig = result.programConfig;
     } else {
       console.log("Loading default configuration from program.json");
-      const response = await fetch('default.json');
-      if (!response.ok) throw new Error("Failed to fetch default.json");
+      const response = await fetch('program.json');
+      if (!response.ok) throw new Error("Failed to fetch program.json");
       const json = await response.json();
       menuConfig = parseConfig(json);
     }
