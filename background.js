@@ -46,7 +46,6 @@ function buildContextMenu(programs) {
   }
 
   // Create Root Item
-  // This ensures the extension icon is displayed next to the root item
   const ROOT_ID = "root_switcher";
   chrome.contextMenus.create({
     id: ROOT_ID,
@@ -59,8 +58,6 @@ function buildContextMenu(programs) {
   programs.forEach((program, pIndex) => {
     let parentId = ROOT_ID;
 
-    // If multiple programs, create a program level. 
-    // If single program, we skip this level and attach environments directly to ROOT.
     if (!skipProgramLevel) {
       const progId = `prog_${pIndex}`;
       chrome.contextMenus.create({
@@ -74,8 +71,6 @@ function buildContextMenu(programs) {
 
     if (program.environments) {
       program.environments.forEach((env, eIndex) => {
-        // ID generation: progIndex_envIndex
-        // We need to ensure uniqueness if we skip program level, but pIndex is 0.
         const envId = `p${pIndex}_env${eIndex}`;
         
         chrome.contextMenus.create({
@@ -127,10 +122,27 @@ function buildContextMenu(programs) {
       });
     }
   });
+
+  // Persist actionMap to handle Service Worker restarts
+  chrome.storage.local.set({ cachedActionMap: actionMap });
 }
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  const action = actionMap[info.menuItemId];
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  let action = actionMap[info.menuItemId];
+
+  if (!action) {
+    // Attempt to restore from storage if SW restarted
+    try {
+      const result = await chrome.storage.local.get(['cachedActionMap']);
+      if (result.cachedActionMap) {
+        actionMap = result.cachedActionMap;
+        action = actionMap[info.menuItemId];
+      }
+    } catch (e) {
+      console.error("Failed to restore actionMap from storage", e);
+    }
+  }
+
   if (action) {
     const currentUrl = tab.url;
     let resourcePath = extractResourcePath(currentUrl);
@@ -143,6 +155,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
     const newUrl = buildUrl(action.url, resourcePath, action.mode);
     chrome.tabs.create({ url: newUrl });
+  } else {
+    console.warn("Unknown menu item clicked or actionMap lost:", info.menuItemId);
   }
 });
 
