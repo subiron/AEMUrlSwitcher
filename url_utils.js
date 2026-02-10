@@ -28,7 +28,7 @@ export function extractResourcePath(url) {
         if (path.startsWith('/sites.html/')) {
             path = path.replace('/sites.html', '')
         }
-        jesl
+
         if (path.endsWith('.html')) {
             path = path.substring(0, path.length - 5);
         }

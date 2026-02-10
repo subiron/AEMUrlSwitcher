@@ -2,10 +2,14 @@ import { extractResourcePath, buildUrl } from './url_utils.js';
 import { parseConfig } from './config_parser.js';
 
 let actionMap = {};
+let uniqueIdCounter = 0;
+
+function getUniqueId() {
+  return `menu_item_${uniqueIdCounter++}`;
+}
 
 async function loadConfig() {
   try {
-    // Check storage first
     const result = await chrome.storage.local.get(['programConfig']);
     let menuConfig;
 
@@ -35,6 +39,7 @@ async function loadConfig() {
 function buildContextMenu(programs) {
   chrome.contextMenus.removeAll();
   actionMap = {}; 
+  uniqueIdCounter = 0;
 
   if (!programs || programs.length === 0) {
     chrome.contextMenus.create({
@@ -45,85 +50,84 @@ function buildContextMenu(programs) {
     return;
   }
 
-  // Create Root Item
-  const ROOT_ID = "root_switcher";
+  const ROOT_ID = getUniqueId();
   chrome.contextMenus.create({
     id: ROOT_ID,
     title: "URL Switcher",
     contexts: ["page"]
   });
 
-  const skipProgramLevel = programs.length === 1;
+  // Helper to safely create menu if not skipping
+  function handleLevel(items, currentParentId, nameGenerator, itemProcessor) {
+    // Skip level if it contains only 1 item
+    // But never skip if it's the Service level (leafs) - handled by caller not calling handleLevel for leaves
+    const skipLevel = items.length === 1;
 
-  programs.forEach((program, pIndex) => {
-    let parentId = ROOT_ID;
-
-    if (!skipProgramLevel) {
-      const progId = `prog_${pIndex}`;
-      chrome.contextMenus.create({
-        id: progId,
-        parentId: ROOT_ID,
-        title: program.name,
-        contexts: ["page"]
-      });
-      parentId = progId;
-    }
-
-    if (program.environments) {
-      program.environments.forEach((env, eIndex) => {
-        const envId = `p${pIndex}_env${eIndex}`;
-        
+    items.forEach((item) => {
+      let nextParentId = currentParentId;
+      
+      if (!skipLevel) {
+        const itemId = getUniqueId();
         chrome.contextMenus.create({
-          id: envId,
-          parentId: parentId,
-          title: `${env.name} (${env.type})`,
+          id: itemId,
+          parentId: currentParentId,
+          title: nameGenerator(item),
           contexts: ["page"]
         });
+        nextParentId = itemId;
+      }
+      // If skipped, nextParentId remains currentParentId (Grandparent), effectively flattening
 
-        if (env.instances) {
-          env.instances.forEach((inst, iIndex) => {
-            const instId = `${envId}_inst${iIndex}`;
-            chrome.contextMenus.create({
-              id: instId,
-              parentId: envId,
-              title: inst.type.toUpperCase(),
-              contexts: ["page"]
-            });
+      if (itemProcessor) {
+        itemProcessor(item, nextParentId);
+      }
+    });
+  }
 
-            const services = [];
-            if (inst.type === 'author') {
-              services.push({ id: 'crx', title: 'CRX/DE' });
-              services.push({ id: 'editor', title: 'Editor' });
-              services.push({ id: 'wcmdisabled', title: 'WCM Disabled' });
-              services.push({ id: 'json', title: 'JSON' });
-            } else if (inst.type === 'publish') {
-              services.push({ id: 'crx', title: 'CRX/DE' });
-              services.push({ id: 'json', title: 'JSON' });
-            } else {
-              services.push({ id: 'open', title: 'Open' });
-            }
+  // Level 1: Programs
+  handleLevel(programs, ROOT_ID, (p) => p.name, (prog, parentId) => {
+    const envs = prog.environments || [];
+    
+    // Level 2: Environments
+    handleLevel(envs, parentId, (e) => `${e.name} (${e.type})`, (env, parentId) => {
+      const instances = env.instances || [];
 
-            services.forEach(svc => {
-              const svcId = `${instId}_svc_${svc.id}`;
-              chrome.contextMenus.create({
-                id: svcId,
-                parentId: instId,
-                title: svc.title,
-                contexts: ["page"]
-              });
-              
-              actionMap[svcId] = {
-                url: inst.url,
-                mode: svc.id
-              };
-            });
-          });
+      // Level 3: Instances
+      handleLevel(instances, parentId, (i) => i.type.toUpperCase(), (inst, parentId) => {
+        
+        // Services definition (Leaves) - Always Rendered
+        const services = [];
+        if (inst.type === 'author') {
+          services.push({ id: 'crx', title: 'CRX/DE' });
+          services.push({ id: 'editor', title: 'Editor' });
+          services.push({ id: 'wcmdisabled', title: 'WCM Disabled' });
+          services.push({ id: 'json', title: 'JSON' });
+        } else if (inst.type === 'publish') {
+          services.push({ id: 'crx', title: 'CRX/DE' });
+          services.push({ id: 'json', title: 'JSON' });
+        } else {
+          services.push({ id: 'open', title: 'Open' });
         }
+
+        services.forEach((svc) => {
+          const svcId = getUniqueId();
+          chrome.contextMenus.create({
+            id: svcId,
+            parentId: parentId,
+            title: svc.title,
+            contexts: ["page"]
+          });
+          
+          actionMap[svcId] = {
+            url: inst.url,
+            mode: svc.id
+          };
+        });
+
       });
-    }
+    });
   });
 
-  // Persist actionMap to handle Service Worker restarts
   chrome.storage.local.set({ cachedActionMap: actionMap });
 }
 
@@ -131,7 +135,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   let action = actionMap[info.menuItemId];
 
   if (!action) {
-    // Attempt to restore from storage if SW restarted
     try {
       const result = await chrome.storage.local.get(['cachedActionMap']);
       if (result.cachedActionMap) {
@@ -156,14 +159,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const newUrl = buildUrl(action.url, resourcePath, action.mode);
     chrome.tabs.create({ url: newUrl });
   } else {
-    console.warn("Unknown menu item clicked or actionMap lost:", info.menuItemId);
+    console.warn("Unknown action or lost map for ID:", info.menuItemId);
   }
 });
 
 chrome.runtime.onInstalled.addListener(loadConfig);
 chrome.runtime.onStartup.addListener(loadConfig);
 
-// Listen for storage changes
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace === 'local' && changes.programConfig) {
     loadConfig();
