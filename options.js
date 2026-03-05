@@ -1,4 +1,5 @@
 import { parseConfig } from './config_parser.js';
+import { reverseMapping } from './url_utils.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const textarea = document.getElementById('configJson');
@@ -11,6 +12,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const importCloudFile = document.getElementById('importCloudFile');
   const statusDiv = document.getElementById('status');
 
+  // Mapping Elements
+  const mappingList = document.getElementById('mappingList');
+  const newPatternInput = document.getElementById('newPattern');
+  const newReplacementInput = document.getElementById('newReplacement');
+  const addMappingBtn = document.getElementById('addMappingBtn');
+  const testUrlInput = document.getElementById('testUrlInput');
+  const testMappingBtn = document.getElementById('testMappingBtn');
+  const testResultSpan = document.getElementById('testResult');
+
   // Dialog elements
   const dialog = document.getElementById('importChoiceDialog');
   const btnMerge = document.getElementById('btnMerge');
@@ -18,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnCancel = document.getElementById('btnCancelImport');
 
   let pendingConfig = null;
+  let currentMappings = [];
 
   // Helper: Show status message
   function showStatus(message, type = 'success') {
@@ -29,7 +40,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 5000);
   }
 
-  // Helper: Get current config from storage (promise)
+  // --- Configuration Logic ---
+
   function getCurrentConfig() {
     return new Promise((resolve) => {
       chrome.storage.local.get(['programConfig'], (result) => {
@@ -38,16 +50,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Helper: Update Textarea
   function updateConfigDisplay() {
     getCurrentConfig().then(config => {
       if (config.length === 0) {
-        // Try loading default just for display if storage is empty
          fetch(chrome.runtime.getURL('program.json'))
           .then(res => res.json())
           .then(json => {
             const minimal = parseConfig(json);
-             // Don't save, just show
             textarea.value = JSON.stringify(minimal, null, 2);
           })
           .catch(() => textarea.value = "[]");
@@ -57,7 +66,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Helper: Save config
   function saveMinimalConfig(config) {
     chrome.storage.local.set({ programConfig: config }, () => {
       showStatus("Configuration saved! Context menu updated.");
@@ -66,48 +74,119 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- Mapping Logic ---
+
+  function loadMappings() {
+      chrome.storage.local.get(['reverseMappingConfig'], (result) => {
+          currentMappings = result.reverseMappingConfig || [];
+          renderMappings();
+      });
+  }
+
+  function saveMappings() {
+      chrome.storage.local.set({ reverseMappingConfig: currentMappings }, () => {
+          showStatus("Mappings saved!");
+          chrome.runtime.sendMessage({ action: "reloadConfig" });
+          renderMappings();
+      });
+  }
+
+  function renderMappings() {
+      mappingList.innerHTML = '';
+      currentMappings.forEach((mapping, index) => {
+          const tr = document.createElement('tr');
+          
+          const tdPattern = document.createElement('td');
+          tdPattern.textContent = mapping.pattern;
+          tr.appendChild(tdPattern);
+
+          const tdReplacement = document.createElement('td');
+          tdReplacement.textContent = mapping.replacement;
+          tr.appendChild(tdReplacement);
+
+          const tdAction = document.createElement('td');
+          const delBtn = document.createElement('button');
+          delBtn.textContent = "Del";
+          delBtn.className = "btn-danger";
+          delBtn.style.padding = "2px 5px";
+          delBtn.onclick = () => {
+              currentMappings.splice(index, 1);
+              saveMappings();
+          };
+          tdAction.appendChild(delBtn);
+          tr.appendChild(tdAction);
+
+          mappingList.appendChild(tr);
+      });
+  }
+
+  addMappingBtn.addEventListener('click', () => {
+      const pattern = newPatternInput.value.trim();
+      const replacement = newReplacementInput.value.trim();
+      
+      if (!pattern || !replacement) {
+          showStatus("Pattern and Replacement are required.", 'error');
+          return;
+      }
+
+      try {
+          new RegExp(pattern); // Validate Regex
+      } catch (e) {
+          showStatus("Invalid Regex Pattern: " + e.message, 'error');
+          return;
+      }
+
+      currentMappings.push({ pattern, replacement });
+      saveMappings();
+      
+      newPatternInput.value = '';
+      newReplacementInput.value = '';
+  });
+
+  testMappingBtn.addEventListener('click', () => {
+      const url = testUrlInput.value.trim();
+      if (!url) return;
+      
+      const result = reverseMapping(url, currentMappings);
+      if (result) {
+          testResultSpan.textContent = result;
+          testResultSpan.style.color = "green";
+      } else {
+          testResultSpan.textContent = "No match found (or extraction failed)";
+          testResultSpan.style.color = "red";
+      }
+  });
+
+
   // --- Merge Logic ---
   function mergeConfigs(existing, incoming) {
-    // Deep clone existing to avoid mutating input reference immediately
     const merged = JSON.parse(JSON.stringify(existing));
-    // Match by Name
     const progMap = new Map(merged.map(p => [p.name, p]));
 
     incoming.forEach(incProg => {
       const exProg = progMap.get(incProg.name);
       if (exProg) {
-        // Merge Environments
         if (!exProg.environments) exProg.environments = [];
-        
-        // Match Environments by Name
         const envMap = new Map(exProg.environments.map(e => [e.name, e])); 
 
         incProg.environments.forEach(incEnv => {
           const envKey = incEnv.name;
           const exEnv = envMap.get(envKey);
-          
           if (exEnv) {
-             // Update details
              exEnv.type = incEnv.type;
-             // Replace instances
              exEnv.instances = incEnv.instances;
           } else {
-             // Add new environment
              exProg.environments.push(incEnv);
              envMap.set(envKey, incEnv); 
           }
         });
-
       } else {
-        // Add new program
         merged.push(incProg);
         progMap.set(incProg.name, incProg);
       }
     });
-
     return merged;
   }
-
 
   // --- Import Flow ---
   function handleImport(newConfig) {
@@ -115,7 +194,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (typeof dialog.showModal === "function") {
       dialog.showModal();
     } else {
-      // Fallback for very old browsers (unlikely in Chrome Ext)
       if (confirm("Click OK to Merge, Cancel to Replace")) {
          performMerge();
       } else {
@@ -138,22 +216,16 @@ document.addEventListener('DOMContentLoaded', () => {
     dialog.close();
   }
 
-
   // --- Listeners ---
-
-  // Dialog Buttons
   btnMerge.addEventListener('click', performMerge);
   btnReplace.addEventListener('click', performReplace);
   btnCancel.addEventListener('click', () => {
     pendingConfig = null;
     dialog.close();
-    // Clear file inputs
     importFile.value = '';
     importCloudFile.value = '';
   });
 
-
-  // Import Minimal
   importBtn.addEventListener('click', () => importFile.click());
   importFile.addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -172,7 +244,6 @@ document.addEventListener('DOMContentLoaded', () => {
     importFile.value = ''; 
   });
 
-  // Import Cloud
   importCloudBtn.addEventListener('click', () => importCloudFile.click());
   importCloudFile.addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -192,7 +263,6 @@ document.addEventListener('DOMContentLoaded', () => {
     importCloudFile.value = '';
   });
 
-  // Save Manual
   if (saveBtn) {
     saveBtn.addEventListener('click', () => {
       try {
@@ -205,7 +275,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Export
   exportBtn.addEventListener('click', () => {
     const config = textarea.value;
     const blob = new Blob([config], { type: 'application/json' });
@@ -217,14 +286,12 @@ document.addEventListener('DOMContentLoaded', () => {
     URL.revokeObjectURL(url);
   });
 
-  // Reset
   resetBtn.addEventListener('click', () => {
     if (confirm("Reset to default?")) {
         fetch(chrome.runtime.getURL('program.json'))
         .then(res => res.json())
         .then(json => {
             const minimal = parseConfig(json);
-            // Treat reset as a "Replace" with default
             saveMinimalConfig(minimal);
         });
     }
@@ -232,4 +299,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Init
   updateConfigDisplay();
+  loadMappings();
 });

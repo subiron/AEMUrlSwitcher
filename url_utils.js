@@ -1,4 +1,21 @@
-export function extractResourcePath(url) {
+export function reverseMapping(url, mappings) {
+    if (!mappings || !Array.isArray(mappings)) return "";
+    
+    for (const mapping of mappings) {
+        if (!mapping.pattern || !mapping.replacement) continue;
+        try {
+            const regex = new RegExp(mapping.pattern);
+            if (regex.test(url)) {
+                return url.replace(regex, mapping.replacement);
+            }
+        } catch (e) {
+            console.error("Invalid regex in mapping", mapping, e);
+        }
+    }
+    return "";
+}
+
+export function extractResourcePath(url, mappings) {
     try {
         const u = new URL(url);
         let path = u.pathname;
@@ -37,6 +54,14 @@ export function extractResourcePath(url) {
         }
         if (!path.startsWith("/conf/") && path.indexOf("/conf/") > 0) {
             path = path.substring(path.indexOf("/conf/"));
+        }
+
+
+        if (!path.startsWith("/conf/") && !path.startsWith("/content/") && !path.startsWith("/apps/") && !path.startsWith("/libs/")) {
+            const mapped = reverseMapping(url, mappings);
+            if (mapped) {
+                return mapped;
+            }
         }
 
         return path;

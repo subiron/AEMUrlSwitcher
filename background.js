@@ -2,6 +2,7 @@ import { extractResourcePath, buildUrl } from './url_utils.js';
 import { parseConfig } from './config_parser.js';
 
 let actionMap = {};
+let reverseMappings = [];
 let uniqueIdCounter = 0;
 
 function getUniqueId() {
@@ -10,18 +11,28 @@ function getUniqueId() {
 
 async function loadConfig() {
   try {
-    const result = await chrome.storage.local.get(['programConfig']);
+    // Load Program Config
+    const progResult = await chrome.storage.local.get(['programConfig']);
     let menuConfig;
 
-    if (result.programConfig) {
+    if (progResult.programConfig) {
       console.log("Loading configuration from local storage");
-      menuConfig = result.programConfig;
+      menuConfig = progResult.programConfig;
     } else {
       console.log("Loading default configuration from program.json");
       const response = await fetch('program.json');
       if (!response.ok) throw new Error("Failed to fetch program.json");
       const json = await response.json();
       menuConfig = parseConfig(json);
+    }
+
+    // Load Reverse Mappings
+    const mapResult = await chrome.storage.local.get(['reverseMappingConfig']);
+    if (mapResult.reverseMappingConfig) {
+        reverseMappings = mapResult.reverseMappingConfig;
+        console.log("Loaded reverse mappings:", reverseMappings.length);
+    } else {
+        reverseMappings = [];
     }
 
     buildContextMenu(menuConfig);
@@ -57,10 +68,7 @@ function buildContextMenu(programs) {
     contexts: ["page"]
   });
 
-  // Helper to safely create menu if not skipping
   function handleLevel(items, currentParentId, nameGenerator, itemProcessor) {
-    // Skip level if it contains only 1 item
-    // But never skip if it's the Service level (leafs) - handled by caller not calling handleLevel for leaves
     const skipLevel = items.length === 1;
 
     items.forEach((item) => {
@@ -76,7 +84,6 @@ function buildContextMenu(programs) {
         });
         nextParentId = itemId;
       }
-      // If skipped, nextParentId remains currentParentId (Grandparent), effectively flattening
 
       if (itemProcessor) {
         itemProcessor(item, nextParentId);
@@ -95,7 +102,7 @@ function buildContextMenu(programs) {
       // Level 3: Instances
       handleLevel(instances, parentId, (i) => i.type.toUpperCase(), (inst, parentId) => {
         
-        // Services definition (Leaves) - Always Rendered
+        // Services definition (Leaves)
         const services = [];
         if (inst.type === 'author') {
           services.push({ id: 'crx', title: 'CRX/DE' });
@@ -148,7 +155,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   if (action) {
     const currentUrl = tab.url;
-    let resourcePath = extractResourcePath(currentUrl);
+    // Pass reverseMappings here
+    let resourcePath = extractResourcePath(currentUrl, reverseMappings);
     
     if (!resourcePath) {
        console.log("Could not extract resource path. Opening base URL.");
@@ -167,8 +175,11 @@ chrome.runtime.onInstalled.addListener(loadConfig);
 chrome.runtime.onStartup.addListener(loadConfig);
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'local' && changes.programConfig) {
-    loadConfig();
+  if (namespace === 'local') {
+      // Reload if either config changes
+      if (changes.programConfig || changes.reverseMappingConfig) {
+          loadConfig();
+      }
   }
 });
 

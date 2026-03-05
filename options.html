@@ -44,6 +44,40 @@
     </div>
   </div>
 
+  <div class="section">
+    <h2>Reverse URL Mapping</h2>
+    <p>Configure patterns to extract content paths from live URLs. Use regex groups ($1, $2...) in replacement.</p>
+    
+    <table id="mappingTable" style="width: 100%; text-align: left; border-collapse: collapse; margin-bottom: 10px;">
+        <thead>
+            <tr style="border-bottom: 1px solid #ccc;">
+                <th>Pattern (Regex)</th>
+                <th>Replacement</th>
+                <th style="width: 80px;">Action</th>
+            </tr>
+        </thead>
+        <tbody id="mappingList">
+            <!-- Rules will be injected here -->
+        </tbody>
+        <tfoot>
+            <tr>
+                <td><input type="text" id="newPattern" placeholder="Regex Pattern" style="width: 95%;"></td>
+                <td><input type="text" id="newReplacement" placeholder="Replacement String" style="width: 95%;"></td>
+                <td><button id="addMappingBtn" class="btn-primary">Add</button></td>
+            </tr>
+        </tfoot>
+    </table>
+
+    <h3>Test Mapping</h3>
+    <div class="controls">
+        <input type="text" id="testUrlInput" placeholder="Enter URL to test" style="flex-grow: 1; padding: 5px;">
+        <button id="testMappingBtn" class="btn-secondary">Test</button>
+    </div>
+    <div style="margin-top: 5px;">
+        <strong>Result:</strong> <span id="testResult" style="font-family: monospace; color: #555;"></span>
+    </div>
+  </div>
+
   <dialog id="importChoiceDialog" style="padding: 20px; border: 1px solid #ccc; border-radius: 8px;">
     <h3>Import Configuration</h3>
     <p>How would you like to handle the imported configuration?</p>
